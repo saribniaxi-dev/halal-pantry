@@ -1,94 +1,107 @@
 import streamlit as st
 import requests
+import google.generativeai as genai
+from PIL import Image
 from datetime import datetime, date
-import urllib.parse
 
-st.set_page_config(page_title="Halal Pantry Pro", page_icon="🌙", layout="wide")
+st.set_page_config(page_title="Halal Pantry AI", page_icon="🌙", layout="wide")
 
-# 1. Connection & Config
+# 1. API Setup
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+model = genai.GenerativeModel('gemini-1.5-flash')
+
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 HEADERS = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json", "Prefer": "return=representation"}
 
-# 2. Sidebar - The "Brains"
-st.sidebar.title("⚙️ Pantry Settings")
-shopping_mode = st.sidebar.selectbox("Shopping Strategy", ["Budget (Lidl/Aldi Mode)", "Standard (Halal Grocer)", "Premium (Waitrose/M&S Mode)"])
-enable_push = st.sidebar.toggle("Enable Phone Notifications", value=True)
+# 2. Sidebar - Strategy Logic
+st.sidebar.title("🍱 Shopping Strategy")
+shopping_mode = st.sidebar.radio(
+    "Select Mode:", 
+    ["Economy (Lidl/Aldi Focus)", "Value (Tesco/Halal Grocers)", "Premium (Waitrose/Organic)"],
+    help="Changes AI suggestions and shopping tips."
+)
 
-# 3. Database Functions
+# 3. Database Function
 def get_inventory():
     r = requests.get(f"{SUPABASE_URL}/rest/v1/inventory?select=*&order=name.asc", headers=HEADERS)
     return r.json() if r.status_code == 200 else []
 
-# 4. APP UI
-st.title("🌙 Halal Pantry: AI Assistant")
-
-tab1, tab2, tab3 = st.tabs(["📋 My Inventory", "📸 Receipt Scanner", "👨‍🍳 AI Chef"])
-
 inventory = get_inventory()
 
-with tab1:
-    # ALERTS
-    today = date.today()
-    low_stock = [i for i in inventory if i['is_essential'] and i['quantity'] <= 1]
-    expiring = [i for i in inventory if i['expiry_date'] and datetime.strptime(i['expiry_date'], '%Y-%m-%d').date() <= today]
-    
-    if low_stock or expiring:
-        st.error(f"⚠️ Action Required: {len(low_stock)} low items | {len(expiring)} expiring!")
+# 4. THE NAVIGATION TABS (This is what you were missing!)
+tab1, tab2, tab3 = st.tabs(["📋 My Dashboard", "📸 Scan Receipt", "👨‍🍳 AI Halal Chef"])
 
-    # THE LIST
+with tab1:
+    st.header("Pantry Status")
+    if not inventory:
+        st.info("Your pantry is empty. Use the scanner to add items!")
     for item in inventory:
-        c1, c2, c3 = st.columns([3, 1, 1])
-        c1.write(f"**{item['name']}**")
-        c2.write(f"{item['quantity']} {item['unit']}")
-        if c3.button("🗑️", key=f"del_{item['id']}"):
+        col1, col2 = st.columns([4, 1])
+        col1.write(f"**{item['name']}** ({item['quantity']} {item['unit']})")
+        if col2.button("🗑️", key=f"del_{item['id']}"):
             requests.delete(f"{SUPABASE_URL}/rest/v1/inventory?id=eq.{item['id']}", headers=HEADERS)
             st.rerun()
 
 with tab2:
-    st.header("📸 Auto-Update via Receipt")
-    uploaded_file = st.file_uploader("Upload a photo of your grocery receipt", type=["jpg", "png", "jpeg"])
-    if uploaded_file:
-        with st.spinner("AI is reading your receipt..."):
-            # This is where the AI Vision logic lives. For now, it detects the action.
-            st.info("AI Analysis: Found 'Chicken', 'Rice', 'Lentils'. Updating Supabase...")
-            # Logic: Send image to Gemini/Vision API -> Parse JSON -> Batch Insert to Supabase
-            st.success("Inventory updated automatically!")
+    st.header("📸 Smart Receipt Scanner")
+    img_file = st.file_uploader("Upload Receipt", type=['jpg', 'png', 'jpeg'])
+    
+    if img_file:
+        img = Image.open(img_file)
+        st.image(img, width=300)
+        if st.button("🤖 Sync to Database"):
+            with st.spinner("AI is analyzing and saving..."):
+                # We ask Gemini for a specific format so the code can read it
+                prompt = """Analyze this receipt. Return ONLY a Python-style list of dictionaries 
+                for food items with keys: 'name', 'quantity' (as number), 'unit' (e.g. kg, pieces, liters). 
+                Example: [{'name': 'Chicken', 'quantity': 2, 'unit': 'kg'}]"""
+                
+                response = model.generate_content([prompt, img])
+                
+                try:
+                    # This converts the AI text into actual data
+                    new_items = eval(response.text.strip().replace("```python", "").replace("```", ""))
+                    for item in new_items:
+                        requests.post(f"{SUPABASE_URL}/rest/v1/inventory", 
+                                      headers=HEADERS, 
+                                      json={**item, "expiry_date": str(date.today()), "is_essential": False})
+                    st.success(f"Added {len(new_items)} items to your pantry!")
+                    st.rerun()
+                except:
+                    st.error("AI list format was slightly off. Try again or check the text output.")
+                    st.write(response.text)
 
 with tab3:
-    st.header("👨‍🍳 AI Recipe Generator")
+    st.header("👨‍🍳 AI Halal Chef")
     if st.button("What can I cook right now?"):
         if not inventory:
-            st.warning("Your pantry is empty! Add ingredients first.")
+            st.warning("Your pantry is empty! Add ingredients first so the AI knows what you have.")
         else:
-            with st.spinner("AI Chef is thinking..."):
-                items_list = ", ".join([i['name'] for i in inventory])
-                # In a full build, this sends 'items_list' to the Gemini API
-                st.markdown(f"### Suggested Halal Recipes for your ingredients:")
-                st.write("1. **One-Pot Chicken & Rice**: Use your chicken and rice. High protein, easy cleanup.")
-                st.write("2. **Lentil Daal**: Perfect for your pantry staples.")
-                st.write("3. **Quick Stir-fry**: Use any remaining veggies.")
+            # This line gets your actual list of food from Supabase
+            items = [i['name'] for i in inventory]
+            
+            with st.spinner("The AI Chef is looking at your pantry..."):
+                # This prompt tells the AI exactly what you have
+                prompt = f"I have these ingredients: {', '.join(items)}. Please suggest 3 Halal recipes. Match the style to: {shopping_mode}."
+                
+                # This line actually calls the Gemini Brain
+                response = model.generate_content(prompt)
+                
+                # This displays the AI's real answer
+                st.markdown(response.text)
 
-# 5. SMART SHOPPING LIST
+# 5. LOCAL SHOPPING LOGIC
 st.divider()
 st.header("🛒 Smart Shopping List")
-st.caption(f"Strategy active: **{shopping_mode}**")
-
 to_buy = [i for i in inventory if i['quantity'] <= 1]
 if to_buy:
-    msg = f"*{shopping_mode} Shopping List*\n"
     for item in to_buy:
-        # Business Logic for "Cheap vs Expensive"
-        price_tip = " (Check Lidl middle aisle)" if "Budget" in shopping_mode else " (Select Organic)" if "Premium" in shopping_mode else ""
-        msg += f"- {item['name']}{price_tip}\n"
-    
-    st.text_area("To-Buy:", msg)
-    
-    # NOTIFICATION TRIGGER
-    if st.button("🔔 Send Push Notification to my Phone"):
-        # We use a simple 'ntfy' service (No account needed, free)
-        # You just download the 'ntfy' app on your phone and subscribe to 'sarib-pantry'
-        requests.post("https://ntfy.sh/sarib-pantry", 
-                     data=msg.encode('utf-8'),
-                     headers={"Title": "Pantry Alert", "Priority": "high"})
-        st.success("Push notification sent!")
+        if "Economy" in shopping_mode:
+            tip = "💡 Tip: Check Lidl on Muller Road for the best price."
+        elif "Premium" in shopping_mode:
+            tip = "💡 Tip: Check Waitrose or M&S for organic options."
+        else:
+            tip = "💡 Tip: Try the Eastville Tesco or Stapleton Road butchers."
+        st.warning(f"**Restock: {item['name']}** — {tip}")
+
