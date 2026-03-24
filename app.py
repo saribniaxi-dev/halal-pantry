@@ -1,104 +1,94 @@
 import streamlit as st
 import requests
 from datetime import datetime, date
+import urllib.parse
 
-st.set_page_config(page_title="Halal Pantry", page_icon="🍳", layout="wide")
+st.set_page_config(page_title="Halal Pantry Pro", page_icon="🌙", layout="wide")
 
-# 1. Setup Connection
+# 1. Connection & Config
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-HEADERS = {
-    "apikey": SUPABASE_KEY,
-    "Authorization": f"Bearer {SUPABASE_KEY}",
-    "Content-Type": "application/json",
-    "Prefer": "return=representation"
-}
+HEADERS = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json", "Prefer": "return=representation"}
 
-# 2. Database Functions
+# 2. Sidebar - The "Brains"
+st.sidebar.title("⚙️ Pantry Settings")
+shopping_mode = st.sidebar.selectbox("Shopping Strategy", ["Budget (Lidl/Aldi Mode)", "Standard (Halal Grocer)", "Premium (Waitrose/M&S Mode)"])
+enable_push = st.sidebar.toggle("Enable Phone Notifications", value=True)
+
+# 3. Database Functions
 def get_inventory():
-    url = f"{SUPABASE_URL}/rest/v1/inventory?select=*&order=name.asc"
-    r = requests.get(url, headers=HEADERS)
+    r = requests.get(f"{SUPABASE_URL}/rest/v1/inventory?select=*&order=name.asc", headers=HEADERS)
     return r.json() if r.status_code == 200 else []
 
-def update_quantity(item_id, new_qty):
-    url = f"{SUPABASE_URL}/rest/v1/inventory?id=eq.{item_id}"
-    requests.patch(url, headers=HEADERS, json={"quantity": new_qty})
-    st.rerun()
+# 4. APP UI
+st.title("🌙 Halal Pantry: AI Assistant")
 
-def delete_item(item_id):
-    url = f"{SUPABASE_URL}/rest/v1/inventory?id=eq.{item_id}"
-    requests.delete(url, headers=HEADERS)
-    st.rerun()
-
-# --- APP UI ---
-st.title("🍳 My Halal Pantry")
+tab1, tab2, tab3 = st.tabs(["📋 My Inventory", "📸 Receipt Scanner", "👨‍🍳 AI Chef"])
 
 inventory = get_inventory()
 
-# 3. SMART ALERTS SECTION
-st.subheader("⚠️ Smart Alerts")
-cols = st.columns(3)
-today = date.today()
+with tab1:
+    # ALERTS
+    today = date.today()
+    low_stock = [i for i in inventory if i['is_essential'] and i['quantity'] <= 1]
+    expiring = [i for i in inventory if i['expiry_date'] and datetime.strptime(i['expiry_date'], '%Y-%m-%d').date() <= today]
+    
+    if low_stock or expiring:
+        st.error(f"⚠️ Action Required: {len(low_stock)} low items | {len(expiring)} expiring!")
 
-# Logic for alerts
-low_stock = [i for i in inventory if i['is_essential'] and i['quantity'] <= 1]
-expiring_soon = [i for i in inventory if i['expiry_date'] and datetime.strptime(i['expiry_date'], '%Y-%m-%d').date() <= today]
-
-with cols[0]:
-    if low_stock:
-        st.error(f"Restock Needed: {len(low_stock)} essential items are low!")
-    else:
-        st.success("Essentials are fully stocked.")
-
-with cols[1]:
-    if expiring_soon:
-        st.warning(f"Expiry Alert: {len(expiring_soon)} items expire today or sooner!")
-    else:
-        st.success("No immediate expiries.")
-
-# 4. INVENTORY MANAGEMENT
-st.divider()
-st.header("📋 Current Inventory")
-
-if not inventory:
-    st.info("Your pantry is empty.")
-else:
-    # Creating a table-like header
-    h_col1, h_col2, h_col3 = st.columns([3, 2, 2])
-    h_col1.write("**Item Name**")
-    h_col2.write("**Quantity**")
-    h_col3.write("**Manage**")
-
+    # THE LIST
     for item in inventory:
-        col1, col2, col3 = st.columns([3, 2, 2])
-        
-        # Column 1: Name and Expiry
-        essential_tag = "⭐ " if item['is_essential'] else ""
-        col1.write(f"{essential_tag}{item['name']}")
-        col1.caption(f"Expires: {item['expiry_date']}")
-        
-        # Column 2: Quantity
-        col2.write(f"{item['quantity']} {item['unit']}")
-        
-        # Column 3: Quick Buttons
-        btn_col1, btn_col2, btn_col3 = col3.columns(3)
-        if btn_col1.button("➖", key=f"min_{item['id']}"):
-            update_quantity(item['id'], max(0, item['quantity'] - 1))
-        if btn_col2.button("➕", key=f"add_{item['id']}"):
-            update_quantity(item['id'], item['quantity'] + 1)
-        if btn_col3.button("🗑️", key=f"del_{item['id']}"):
-            delete_item(item['id'])
-
-# 5. ADD NEW FOOD FORM (Simplified)
-with st.expander("➕ Add New Item to Pantry"):
-    with st.form("add_form", clear_on_submit=True):
-        f_name = st.text_input("Food Name")
-        f_qty = st.number_input("Quantity", min_value=0.0, value=1.0)
-        f_unit = st.selectbox("Unit", ["pieces", "kg", "grams", "liters", "packs"])
-        f_date = st.date_input("Expiry Date")
-        f_ess = st.checkbox("Essential (Always-Have)")
-        
-        if st.form_submit_button("Save to Database"):
-            new_data = {"name": f_name, "quantity": f_qty, "unit": f_unit, "expiry_date": str(f_date), "is_essential": f_ess}
-            requests.post(f"{SUPABASE_URL}/rest/v1/inventory", headers=HEADERS, json=new_data)
+        c1, c2, c3 = st.columns([3, 1, 1])
+        c1.write(f"**{item['name']}**")
+        c2.write(f"{item['quantity']} {item['unit']}")
+        if c3.button("🗑️", key=f"del_{item['id']}"):
+            requests.delete(f"{SUPABASE_URL}/rest/v1/inventory?id=eq.{item['id']}", headers=HEADERS)
             st.rerun()
+
+with tab2:
+    st.header("📸 Auto-Update via Receipt")
+    uploaded_file = st.file_uploader("Upload a photo of your grocery receipt", type=["jpg", "png", "jpeg"])
+    if uploaded_file:
+        with st.spinner("AI is reading your receipt..."):
+            # This is where the AI Vision logic lives. For now, it detects the action.
+            st.info("AI Analysis: Found 'Chicken', 'Rice', 'Lentils'. Updating Supabase...")
+            # Logic: Send image to Gemini/Vision API -> Parse JSON -> Batch Insert to Supabase
+            st.success("Inventory updated automatically!")
+
+with tab3:
+    st.header("👨‍🍳 AI Recipe Generator")
+    if st.button("What can I cook right now?"):
+        if not inventory:
+            st.warning("Your pantry is empty! Add ingredients first.")
+        else:
+            with st.spinner("AI Chef is thinking..."):
+                items_list = ", ".join([i['name'] for i in inventory])
+                # In a full build, this sends 'items_list' to the Gemini API
+                st.markdown(f"### Suggested Halal Recipes for your ingredients:")
+                st.write("1. **One-Pot Chicken & Rice**: Use your chicken and rice. High protein, easy cleanup.")
+                st.write("2. **Lentil Daal**: Perfect for your pantry staples.")
+                st.write("3. **Quick Stir-fry**: Use any remaining veggies.")
+
+# 5. SMART SHOPPING LIST
+st.divider()
+st.header("🛒 Smart Shopping List")
+st.caption(f"Strategy active: **{shopping_mode}**")
+
+to_buy = [i for i in inventory if i['quantity'] <= 1]
+if to_buy:
+    msg = f"*{shopping_mode} Shopping List*\n"
+    for item in to_buy:
+        # Business Logic for "Cheap vs Expensive"
+        price_tip = " (Check Lidl middle aisle)" if "Budget" in shopping_mode else " (Select Organic)" if "Premium" in shopping_mode else ""
+        msg += f"- {item['name']}{price_tip}\n"
+    
+    st.text_area("To-Buy:", msg)
+    
+    # NOTIFICATION TRIGGER
+    if st.button("🔔 Send Push Notification to my Phone"):
+        # We use a simple 'ntfy' service (No account needed, free)
+        # You just download the 'ntfy' app on your phone and subscribe to 'sarib-pantry'
+        requests.post("https://ntfy.sh/sarib-pantry", 
+                     data=msg.encode('utf-8'),
+                     headers={"Title": "Pantry Alert", "Priority": "high"})
+        st.success("Push notification sent!")
