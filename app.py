@@ -90,9 +90,8 @@ with tab2:
             else:
                 with st.spinner("Analyzing..."):
                     prompt = """Analyze this receipt. Return ONLY a JSON list of dictionaries.
-                    Keys: 'name', 'quantity' (integer), 'unit'.
-                    Example: [{"name": "Chicken", "quantity": 1, "unit": "kg"}]"""
-                    
+                Keys: 'name', 'quantity' (integer), 'unit', 'price' (float).
+                Example: [{"name": "Chicken", "quantity": 1, "unit": "kg", "price": 5.99}]"""
                     try:
                         # Explicitly use the model found by our finder
                         response = model.generate_content([prompt, img])
@@ -103,7 +102,7 @@ with tab2:
                         for item in new_items:
                             post_response = requests.post(f"{SUPABASE_URL}/rest/v1/inventory", 
                                           headers=HEADERS, 
-                                          json={**item, "expiry_date": str(date.today())})
+                                          json={**item, "expiry_date": str(date.today()), "price": item.get("price", 0)})
                             if post_response.status_code not in [200, 201]:
                                 st.error(f"Failed to add {item['name']}: {post_response.status_code} - {post_response.text}")
                             else:
@@ -120,15 +119,32 @@ with tab3:
     if not model:
         st.error("AI model not configured. Please set up Gemini API key or ADC.")
     else:
-        ingredients = st.text_input("Enter ingredients (comma-separated):")
-        if st.button("Generate Recipe"):
-            if ingredients:
-                with st.spinner("Cooking up a recipe..."):
+        inventory = get_inventory()
+        if not inventory:
+            st.warning("No inventory available. Please scan some receipts first.")
+        else:
+            st.subheader("Current Inventory")
+            inventory_text = ", ".join([f"{item['name']} ({item['quantity']} {item['unit']})" for item in inventory])
+            st.write(f"Available ingredients: {inventory_text}")
+            
+            budget = st.number_input("Budget for additional ingredients (£)", min_value=0.0, value=10.0, step=1.0)
+            
+            if st.button("Generate Recipe Ideas"):
+                with st.spinner("Cooking up recipe ideas..."):
                     try:
-                        recipe_prompt = f"Create a simple halal recipe using these ingredients: {ingredients}. Keep it halal and healthy."
-                        recipe_response = model.generate_content(recipe_prompt)
+                        chef_prompt = f"""Based on these available ingredients: {inventory_text}
+
+Generate 2-3 halal recipe suggestions that can be made with the current inventory. For each recipe, include:
+1. Recipe name
+2. Ingredients needed (from inventory)
+3. Simple instructions
+4. Estimated cost (based on typical prices)
+
+If the budget allows (£{budget}), also suggest 1-2 additional ingredients to buy that would enable a more impressive recipe. Include the additional cost and the enhanced recipe.
+
+Keep recipes halal, healthy, and suitable for a student budget."""
+                        
+                        recipe_response = model.generate_content(chef_prompt)
                         st.write(recipe_response.text)
                     except Exception as e:
-                        st.error(f"Error generating recipe: {e}")
-            else:
-                st.warning("Please enter some ingredients.")
+                        st.error(f"Error generating recipes: {e}")
