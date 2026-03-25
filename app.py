@@ -85,36 +85,35 @@ with tab2:
         if st.button("🤖 Sync to Database"):
             if not model:
                 st.error("AI model not configured. Please set up Gemini API key or ADC.")
-                return
-            if not HEADERS or not SUPABASE_URL:
+            elif not HEADERS or not SUPABASE_URL:
                 st.error("Database not configured. Please set up Supabase secrets.")
-                return
-            with st.spinner("Analyzing..."):
-                prompt = """Analyze this receipt. Return ONLY a JSON list of dictionaries.
-                Keys: 'name', 'quantity' (integer), 'unit'.
-                Example: [{"name": "Chicken", "quantity": 1, "unit": "kg"}]"""
-                
-                try:
-                    # Explicitly use the model found by our finder
-                    response = model.generate_content([prompt, img])
-                    clean_text = response.text.replace("```json", "").replace("```", "").strip()
-                    st.write(f"Raw AI response: {clean_text}")  # Debug: show raw response
-                    new_items = json.loads(clean_text)
+            else:
+                with st.spinner("Analyzing..."):
+                    prompt = """Analyze this receipt. Return ONLY a JSON list of dictionaries.
+                    Keys: 'name', 'quantity' (integer), 'unit'.
+                    Example: [{"name": "Chicken", "quantity": 1, "unit": "kg"}]"""
                     
-                    for item in new_items:
-                        post_response = requests.post(f"{SUPABASE_URL}/rest/v1/inventory", 
-                                      headers=HEADERS, 
-                                      json={**item, "expiry_date": str(date.today())})
-                        if post_response.status_code not in [200, 201]:
-                            st.error(f"Failed to add {item['name']}: {post_response.status_code} - {post_response.text}")
-                        else:
-                            st.success(f"Added {item['name']}")
-                    st.success(f"Successfully added {len(new_items)} items!")
-                    st.rerun()
-                except json.JSONDecodeError as e:
-                    st.error(f"Failed to parse AI response as JSON: {e}. Raw response: {clean_text}")
-                except Exception as e:
-                    st.error(f"Error during sync: {e}")
+                    try:
+                        # Explicitly use the model found by our finder
+                        response = model.generate_content([prompt, img])
+                        clean_text = response.text.replace("```json", "").replace("```", "").strip()
+                        st.write(f"Raw AI response: {clean_text}")  # Debug: show raw response
+                        new_items = json.loads(clean_text)
+                        
+                        for item in new_items:
+                            post_response = requests.post(f"{SUPABASE_URL}/rest/v1/inventory", 
+                                          headers=HEADERS, 
+                                          json={**item, "expiry_date": str(date.today())})
+                            if post_response.status_code not in [200, 201]:
+                                st.error(f"Failed to add {item['name']}: {post_response.status_code} - {post_response.text}")
+                            else:
+                                st.success(f"Added {item['name']}")
+                        st.success(f"Successfully added {len(new_items)} items!")
+                        st.rerun()
+                    except json.JSONDecodeError as e:
+                        st.error(f"Failed to parse AI response as JSON: {e}. Raw response: {clean_text}")
+                    except Exception as e:
+                        st.error(f"Error during sync: {e}")
 
 with tab3:
     st.header("👨‍🍳 AI Halal Chef")
