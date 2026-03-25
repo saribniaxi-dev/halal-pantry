@@ -1,9 +1,36 @@
 import streamlit as st
 import requests
-import google.generativeai as genai
+import google.genai as genai
 from PIL import Image
 from datetime import date
 import json
+
+# --- 0. HELPER FUNCTIONS ---
+
+def _supabase_configured():
+    return bool(SUPABASE_URL and SUPABASE_KEY and HEADERS)
+
+
+@st.cache_data(ttl=60)
+def get_inventory():
+    """Fetch inventory from Supabase, fallback to local session storage."""
+    if not _supabase_configured():
+        st.warning("Supabase not configured. Using local inventory fallback.")
+        return st.session_state.get("local_inventory", [])
+
+    try:
+        response = requests.get(f"{SUPABASE_URL}/rest/v1/inventory?select=*&order=name", headers=HEADERS, timeout=12)
+        if response.status_code == 200:
+            inventory = response.json()
+            # Keep a local copy for offline fallback
+            st.session_state["local_inventory"] = inventory
+            return inventory
+        else:
+            st.error(f"Failed to fetch inventory from Supabase: {response.status_code}")
+            return st.session_state.get("local_inventory", [])
+    except Exception as e:
+        st.error(f"Error fetching inventory: {e} — using local cache.")
+        return st.session_state.get("local_inventory", [])
 
 # --- 1. PAGE SETUP ---
 st.set_page_config(
@@ -58,17 +85,47 @@ st.markdown("""
         font-size: 1.1rem;
         color: #64748b;
         text-align: center;
-        margin-bottom: 3rem;
+        margin-bottom: 2rem;
         animation: fadeInUp 1.4s ease-out;
         line-height: 1.7;
-        max-width: 900px;
+        max-width: 1200px;
         margin-left: auto;
         margin-right: auto;
-        background: rgba(255,255,255,0.8);
-        padding: 2rem;
-        border-radius: 16px;
-        border: 1px solid rgba(255,255,255,0.5);
-        backdrop-filter: blur(10px);
+        padding: 1rem;
+    }
+
+    .feature-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 1.2rem;
+        margin-top: 1rem;
+    }
+
+    .feature-card {
+        background: linear-gradient(145deg, #ffffff 0%, #eff6ff 100%);
+        border: 1px solid #cbd5e1;
+        border-radius: 18px;
+        padding: 1.2rem;
+        box-shadow: 0 10px 25px rgba(99, 102, 241, 0.12);
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .feature-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 12px 30px rgba(99, 102, 241, 0.18);
+    }
+
+    .feature-card h3 {
+        margin: 0 0 0.5rem 0;
+        color: #1e293b;
+        font-size: 1.1rem;
+    }
+
+    .feature-card p {
+        margin: 0;
+        color: #475569;
+        font-size: 0.95rem;
+        line-height: 1.4;
     }
     
     .nav-grid {
@@ -481,17 +538,12 @@ HEADERS = None
 try:
     # Try to get API key from secrets, fallback to ADC
     api_key = st.secrets.get("GEMINI_API_KEY")
-    genai.configure(api_key=api_key)
-    
-    # NEW: Automatically find the best "Flash" model available to you
-    # This prevents the "404 Not Found" error
-    available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-    
-    # Order of preference for 2026
-    preferred = ['models/gemini-3-flash-preview', 'models/gemini-3-flash', 'models/gemini-2.5-flash']
-    MODEL_NAME = next((m for m in preferred if m in available_models), 'models/gemini-2.0-flash')
-    
-    model = genai.GenerativeModel(MODEL_NAME)
+    client = genai.Client(api_key=api_key)
+
+    # Use the new API - try different model names
+    MODEL_NAME = 'gemini-2.0-flash-exp'  # Updated model name for 2026
+
+    model = client.models  # Use client.models instead of GenerativeModel
 except Exception as e:
     st.warning(f"Gemini AI setup failed: {e}. Some features may not work.")
 
@@ -507,6 +559,7 @@ try:
 except Exception as e:
     st.warning(f"Supabase setup failed: {e}. Database features may not work.")
 
+
 # --- 3. APP NAVIGATION ---
 st.markdown('<h1 class="main-header">🌙 Halal Pantry AI</h1>', unsafe_allow_html=True)
 st.markdown('<p class="subtitle">Your intelligent halal food management assistant powered by AI</p>', unsafe_allow_html=True)
@@ -514,15 +567,25 @@ st.markdown('<p class="subtitle">Your intelligent halal food management assistan
 # Feature Overview
 st.markdown("""
 <div class="intro-text">
-    <strong>Transform your grocery shopping experience with AI-powered halal verification, smart inventory management, and personalized recipe suggestions.</strong><br><br>
-    
-    🧠 <strong>AI Receipt Scanner:</strong> Upload receipts and watch as our advanced AI extracts items, prices, and quantities with 95%+ accuracy, automatically verifying halal compliance.<br><br>
-    
-    📊 <strong>Smart Dashboard:</strong> Real-time inventory tracking with bulk operations, manual additions, and intelligent expiry alerts to reduce food waste.<br><br>
-    
-    👨‍🍳 <strong>Halal AI Chef:</strong> Get personalized recipe recommendations based on your current pantry items, with budget-conscious suggestions for additional ingredients you might need.<br><br>
-    
-    🎯 <strong>Perfect for:</strong> Students, busy professionals, and halal-conscious families who want to save time, money, and ensure dietary compliance.
+    <h2>Transform your grocery shopping experience</h2>
+    <div class="feature-grid">
+        <div class="feature-card">
+            <h3>🧠 AI Receipt Scanner</h3>
+            <p>Upload receipts and watch advanced AI extract items, prices, and quantities with 95%+ accuracy, plus halal verification guidance.</p>
+        </div>
+        <div class="feature-card">
+            <h3>📊 Smart Dashboard</h3>
+            <p>Real-time inventory tracking, bulk operations, manual entries, and expiry alerts to reduce waste and save money.</p>
+        </div>
+        <div class="feature-card">
+            <h3>👨‍🍳 Halal AI Chef</h3>
+            <p>Personalized recipe recommendations based on pantry contents, with budget-aware ingredient suggestions for every meal.</p>
+        </div>
+        <div class="feature-card">
+            <h3>🎯 Ideal for You</h3>
+            <p>Great for students, busy professionals, and halal-conscious families who want time savings, better budgeting, and compliance peace of mind.</p>
+        </div>
+    </div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -588,7 +651,11 @@ if st.session_state.current_page == "dashboard":
         # Display items in a compact list
         st.markdown('<div class="inventory-list">', unsafe_allow_html=True)
         for item in inventory:
-            selected = st.checkbox("", key=f"select_{item.get('id', item['name'])}", label_visibility="collapsed")
+            selected = st.checkbox(
+                "Select item", 
+                key=f"select_{item.get('id', item.get('name', 'unknown'))}",
+                label_visibility="collapsed"
+            )
             if selected:
                 selected_items.append(item)
             
@@ -679,8 +746,11 @@ Keys: 'name', 'quantity' (integer), 'unit', 'price' (float).
 Example: [{"name": "Chicken", "quantity": 1, "unit": "kg", "price": 5.99}]"""
                     
                     try:
-                        response = model.generate_content([prompt, img])
-                        clean_text = response.text.replace("```json", "").replace("```", "").strip()
+                        response = model.generate_content(
+                            model=MODEL_NAME,
+                            contents=[prompt, img]
+                        )
+                        clean_text = response.candidates[0].content.parts[0].text.replace("```json", "").replace("```", "").strip()
                         new_items = json.loads(clean_text)
                         
                         success_count = 0
@@ -741,8 +811,11 @@ For each category, provide:
 
 Focus on practical, delicious halal recipes with clear instructions."""
                         
-                        recipe_response = model.generate_content(chef_prompt)
-                        recipes = recipe_response.text
+                        recipe_response = model.generate_content(
+                            model=MODEL_NAME,
+                            contents=chef_prompt
+                        )
+                        recipes = recipe_response.candidates[0].content.parts[0].text
                         
                         # Display recipes in styled sections
                         st.markdown('<div class="recipe-section">', unsafe_allow_html=True)
