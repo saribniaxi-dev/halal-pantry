@@ -541,7 +541,7 @@ try:
     client = genai.Client(api_key=api_key)
 
     # Use the new API - try different model names
-    MODEL_NAME = 'gemini-2.0-flash-exp'  # Updated model name for 2026
+    MODEL_NAME = 'gemini-1.5-flash'  # Using stable, available model
 
     model = client.models  # Use client.models instead of GenerativeModel
 except Exception as e:
@@ -813,7 +813,7 @@ Focus on practical, delicious halal recipes with clear instructions."""
                         
                         recipe_response = model.generate_content(
                             model=MODEL_NAME,
-                            contents=chef_prompt
+                            contents=[chef_prompt]
                         )
                         recipes = recipe_response.candidates[0].content.parts[0].text
                         
