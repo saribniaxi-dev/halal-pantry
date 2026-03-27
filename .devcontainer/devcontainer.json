@@ -1,10 +1,19 @@
 {
-  "name": "Halal Pantry Pro Env",
-  "image": "mcr.microsoft.com/devcontainers/python:3.11",
-  "postCreateCommand": "pip install -r requirements.txt",
-  "customizations": {
-    "vscode": {
-      "extensions": ["ms-python.python", "ms-azuretools.vscode-docker"]
-    }
-  }
+	"name": "Halal Pantry Pro Env",
+	"image": "mcr.microsoft.com/devcontainers/python:3.11",
+	"features": {
+		"ghcr.io/devcontainers/features/common-utils:2": {},
+		"ghcr.io/devcontainers/features/git:1": {}
+	},
+	"postCreateCommand": "curl https://sdk.cloud.google.com | bash && exec -l $SHELL && gcloud components install beta --quiet && pip install -r requirements.txt",
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-python.python",
+				"ms-azuretools.vscode-docker",
+				"googlecloudtools.cloudcode"
+			]
+		}
+	},
+	"remoteUser": "vscode"
 }

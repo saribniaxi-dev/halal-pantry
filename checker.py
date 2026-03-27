@@ -1,22 +1,36 @@
 import requests
-from datetime import date
 
-# These will be pulled from GitHub's secret vault later
-URL = "YOUR_SUPABASE_URL"
-KEY = "YOUR_SUPABASE_KEY"
-HEADERS = {"apikey": KEY, "Authorization": f"Bearer {KEY}"}
-
-def check_pantry():
-    r = requests.get(f"{URL}/rest/v1/inventory?select=*", headers=HEADERS)
-    items = r.json()
-    today = str(date.today())
+try:
+    with open('.streamlit/secrets.toml', 'r') as f:
+        content = f.read()
     
-    # Logic: Find items expiring today or essentials that are low
-    problems = [i['name'] for i in items if i['expiry_date'] == today or (i['is_essential'] and i['quantity'] <= 1)]
+    supabase_url = ''
+    supabase_key = ''
     
-    if problems:
-        msg = f"Morning Sarib! Quick update: {', '.join(problems)} need your attention today."
-        requests.post("https://ntfy.sh/sarib-pantry", data=msg.encode('utf-8'))
+    for line in content.splitlines():
+        if "SUPABASE_URL" in line:
+            supabase_url = line.split('=')[1].strip().strip('"').strip("'")
+        if "SUPABASE_KEY" in line:
+            supabase_key = line.split('=')[1].strip().strip('"').strip("'")
+            
+    if not supabase_url or not supabase_key:
+        print('Missing SUPABASE_URL or SUPABASE_KEY in secrets.')
+        exit(1)
 
-if __name__ == "__main__":
-    check_pantry()
+    headers = {
+        'apikey': supabase_key,
+        'Authorization': f'Bearer {supabase_key}'
+    }
+
+    url = f'{supabase_url}/rest/v1/inventory?select=*'
+    response = requests.get(url, headers=headers)
+    
+    if response.status_code == 200:
+        items = response.json()
+        print(f'Connection Successful! HTTP 200.')
+        print(f'Inventory items count: {len(items)}')
+    else:
+        print(f'Connection Failed! HTTP {response.status_code}')
+        print(response.text)
+except Exception as e:
+    print(f'Error checking Supabase connection: {e}')

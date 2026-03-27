@@ -1,6 +1,6 @@
 import streamlit as st
 import requests
-import google.generativeai as genai
+from google import genai
 from PIL import Image
 from datetime import date
 import json
@@ -533,38 +533,29 @@ st.markdown("""
 ai_configured = False
 AI_CLIENT = None
 MODEL_NAME = None
-AI_PROVIDER = None  # 'generativeai' or 'genai'
 SUPABASE_URL = None
 SUPABASE_KEY = None
 HEADERS = None
 
 MODEL_CANDIDATES = [
+    'gemini-2.5-flash',
     'gemini-1.5-flash',
-    'gemini-1.5',
-    'gemini-1.0',
-    'gemini-pro',
-    'text-bison-001'
+    'gemini-1.5-pro',
+    'gemini-1.5'
 ]
 
-
 def find_available_model():
-    if AI_CLIENT is None or AI_PROVIDER is None:
+    if AI_CLIENT is None:
         return MODEL_CANDIDATES[0]
 
     try:
-        if hasattr(AI_CLIENT, 'list_models'):
-            models = AI_CLIENT.list_models()
-        else:
-            models = []
-
+        # new SDK client.models.list() returns iterable of Model
         available_names = []
-        for m in models:
-            if isinstance(m, dict):
-                name = m.get('name')
-            else:
-                name = getattr(m, 'name', None)
-            if name:
-                available_names.append(name)
+        for m in AI_CLIENT.models.list():
+            if m.name:
+                available_names.append(m.name)
+                # handle "models/gemini-1.5-flash" naming
+                available_names.append(m.name.split("/")[-1])
 
         for candidate in MODEL_CANDIDATES:
             if candidate in available_names:
@@ -582,21 +573,6 @@ def parse_ai_text(response):
         return ''
     if hasattr(response, 'text'):
         return response.text
-    if isinstance(response, dict):
-        if 'text' in response:
-            return response['text']
-        if 'output' in response:
-            return response['output']
-
-    cands = getattr(response, 'candidates', None)
-    if cands:
-        first = cands[0]
-        content = getattr(first, 'content', None)
-        if content and hasattr(content, 'parts'):
-            return ''.join([getattr(part, 'text', '') for part in content.parts if getattr(part, 'text', None)])
-        if hasattr(first, 'text'):
-            return first.text
-
     return str(response)
 
 
@@ -604,21 +580,15 @@ def generate_ai_text(prompt, image=None):
     if not ai_configured or AI_CLIENT is None or not MODEL_NAME:
         raise RuntimeError('AI model is not configured')
 
-    if AI_PROVIDER == 'generativeai':
-        if hasattr(AI_CLIENT, 'generate_text'):
-            resp = AI_CLIENT.generate_text(model=MODEL_NAME, prompt=prompt, max_output_tokens=1000, temperature=0.8)
-        elif hasattr(AI_CLIENT, 'generate'):
-            resp = AI_CLIENT.generate(model=MODEL_NAME, prompt=prompt)
-        else:
-            raise RuntimeError('No supported generate method on google.generativeai client')
-    elif AI_PROVIDER == 'genai':
-        if image is not None:
-            resp = AI_CLIENT.generate_content(model=MODEL_NAME, contents=[prompt, image])
-        else:
-            resp = AI_CLIENT.generate_content(model=MODEL_NAME, contents=[prompt])
-    else:
-        raise RuntimeError('Unknown AI provider')
+    contents = [prompt]
+    if image is not None:
+        contents.append(image)
 
+    resp = AI_CLIENT.models.generate_content(
+        model=MODEL_NAME, 
+        contents=contents
+    )
+    
     return parse_ai_text(resp)
 
 
@@ -627,23 +597,11 @@ try:
     if not api_key:
         raise ValueError('GEMINI_API_KEY is not set')
 
-    try:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        AI_CLIENT = genai
-        AI_PROVIDER = 'generativeai'
-    except Exception:
-        try:
-            import google.genai as genai
-            client = genai.Client(api_key=api_key)
-            AI_CLIENT = client.models
-            AI_PROVIDER = 'genai'
-        except Exception as inner:
-            raise inner
+    # Initialize new genai client
+    AI_CLIENT = genai.Client(api_key=api_key)
 
     MODEL_NAME = find_available_model()
     ai_configured = True
-    st.info(f'Gemini AI configured: model={MODEL_NAME}')
 except Exception as e:
     ai_configured = False
     st.warning(f'Gemini AI setup failed: {e}. Some features may not work.')

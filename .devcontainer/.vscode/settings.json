@@ -1,0 +1,6 @@
+{
+    "python.defaultInterpreterPath": ".venv/bin/python",
+    "python.terminal.activateEnvironment": true,
+    "python.envFile": "${workspaceFolder}/.env",
+    "python.experiments.optOutFrom": ["pythonTerminalEnvVarActivation"]
+}
