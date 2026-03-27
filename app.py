@@ -530,12 +530,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 2. SECURE API SETUP & MODEL FINDER ---
-model = False
+ai_configured = False
+AI_CLIENT = None
+MODEL_NAME = None
+AI_PROVIDER = None  # 'generativeai' or 'genai'
 SUPABASE_URL = None
 SUPABASE_KEY = None
 HEADERS = None
 
-MODEL_NAME = None
 MODEL_CANDIDATES = [
     'gemini-1.5-flash',
     'gemini-1.5',
@@ -546,8 +548,15 @@ MODEL_CANDIDATES = [
 
 
 def find_available_model():
+    if AI_CLIENT is None or AI_PROVIDER is None:
+        return MODEL_CANDIDATES[0]
+
     try:
-        models = genai.list_models()
+        if hasattr(AI_CLIENT, 'list_models'):
+            models = AI_CLIENT.list_models()
+        else:
+            models = []
+
         available_names = []
         for m in models:
             if isinstance(m, dict):
@@ -557,29 +566,87 @@ def find_available_model():
             if name:
                 available_names.append(name)
 
+        for candidate in MODEL_CANDIDATES:
+            if candidate in available_names:
+                return candidate
         if available_names:
-            for candidate in MODEL_CANDIDATES:
-                if candidate in available_names:
-                    return candidate
+            return available_names[0]
     except Exception:
         pass
 
-    # Fallback to first candidate (best effort), may still fail if unsupported
     return MODEL_CANDIDATES[0]
 
 
-try:
-    api_key = st.secrets.get("GEMINI_API_KEY")
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY is not set")
+def parse_ai_text(response):
+    if response is None:
+        return ''
+    if hasattr(response, 'text'):
+        return response.text
+    if isinstance(response, dict):
+        if 'text' in response:
+            return response['text']
+        if 'output' in response:
+            return response['output']
 
-    genai.configure(api_key=api_key)
+    cands = getattr(response, 'candidates', None)
+    if cands:
+        first = cands[0]
+        content = getattr(first, 'content', None)
+        if content and hasattr(content, 'parts'):
+            return ''.join([getattr(part, 'text', '') for part in content.parts if getattr(part, 'text', None)])
+        if hasattr(first, 'text'):
+            return first.text
+
+    return str(response)
+
+
+def generate_ai_text(prompt, image=None):
+    if not ai_configured or AI_CLIENT is None or not MODEL_NAME:
+        raise RuntimeError('AI model is not configured')
+
+    if AI_PROVIDER == 'generativeai':
+        if hasattr(AI_CLIENT, 'generate_text'):
+            resp = AI_CLIENT.generate_text(model=MODEL_NAME, prompt=prompt, max_output_tokens=1000, temperature=0.8)
+        elif hasattr(AI_CLIENT, 'generate'):
+            resp = AI_CLIENT.generate(model=MODEL_NAME, prompt=prompt)
+        else:
+            raise RuntimeError('No supported generate method on google.generativeai client')
+    elif AI_PROVIDER == 'genai':
+        if image is not None:
+            resp = AI_CLIENT.generate_content(model=MODEL_NAME, contents=[prompt, image])
+        else:
+            resp = AI_CLIENT.generate_content(model=MODEL_NAME, contents=[prompt])
+    else:
+        raise RuntimeError('Unknown AI provider')
+
+    return parse_ai_text(resp)
+
+
+try:
+    api_key = st.secrets.get('GEMINI_API_KEY')
+    if not api_key:
+        raise ValueError('GEMINI_API_KEY is not set')
+
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        AI_CLIENT = genai
+        AI_PROVIDER = 'generativeai'
+    except Exception:
+        try:
+            import google.genai as genai
+            client = genai.Client(api_key=api_key)
+            AI_CLIENT = client.models
+            AI_PROVIDER = 'genai'
+        except Exception as inner:
+            raise inner
+
     MODEL_NAME = find_available_model()
-    model = True
-    st.info(f"Using Gemini model: {MODEL_NAME}")
+    ai_configured = True
+    st.info(f'Gemini AI configured: model={MODEL_NAME}')
 except Exception as e:
-    model = False
-    st.warning(f"Gemini AI setup failed: {e}. Some features may not work.")
+    ai_configured = False
+    st.warning(f'Gemini AI setup failed: {e}. Some features may not work.')
 
 try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
@@ -769,7 +836,7 @@ elif st.session_state.current_page == "scanner":
         st.image(img, width=300, caption="Receipt Preview", use_column_width=False, clamp=True, output_format="auto")
         
         if st.button("🤖 Analyze & Sync", type="primary"):
-            if not model:
+            if not ai_configured:
                 st.error("AI model not configured.")
             elif not HEADERS or not SUPABASE_URL:
                 st.error("Database not configured.")
@@ -780,13 +847,8 @@ Keys: 'name', 'quantity' (integer), 'unit', 'price' (float).
 Example: [{"name": "Chicken", "quantity": 1, "unit": "kg", "price": 5.99}]"""
                     
                     try:
-                        response = genai.generate_text(
-                            model=MODEL_NAME,
-                            prompt=prompt,
-                            max_output_tokens=700,
-                            temperature=0.2
-                        )
-                        clean_text = response.text.replace("```json", "").replace("```", "").strip()
+                        response_text = generate_ai_text(prompt, image=img)
+                        clean_text = response_text.replace("```json", "").replace("```", "").strip()
                         new_items = json.loads(clean_text)
                         
                         success_count = 0
@@ -813,7 +875,7 @@ elif st.session_state.current_page == "chef":
     st.markdown('<h2 class="section-header">👨‍🍳 AI Halal Chef</h2>', unsafe_allow_html=True)
     st.markdown("Get personalized recipe suggestions based on your pantry with budget-conscious additions")
     
-    if not model or not MODEL_NAME:
+    if not ai_configured or not MODEL_NAME:
         st.error("AI model not configured. Please set GEMINI_API_KEY and ensure a supported model is available.")
     else:
         inventory = get_inventory()
@@ -846,13 +908,7 @@ For each category, provide:
 
 Focus on practical, delicious halal recipes with clear instructions."""
                         
-                        recipe_response = genai.generate_text(
-                            model=MODEL_NAME,
-                            prompt=chef_prompt,
-                            max_output_tokens=1000,
-                            temperature=0.85
-                        )
-                        recipes = recipe_response.text
+                        recipes = generate_ai_text(chef_prompt)
                         
                         st.markdown('<div class="recipe-section">', unsafe_allow_html=True)
                         st.markdown("### 🍳 Your Personalized Recipe Suggestions")
