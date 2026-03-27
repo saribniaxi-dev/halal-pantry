@@ -1,6 +1,6 @@
 import streamlit as st
 import requests
-import google.genai as genai
+import google.generativeai as genai
 from PIL import Image
 from datetime import date
 import json
@@ -542,8 +542,7 @@ try:
 
     # Use the standard model name that works reliably
     MODEL_NAME = 'gemini-pro'  # Stable, well-supported model
-
-    model = genai.GenerativeModel(MODEL_NAME)  # Use GenerativeModel for standard API
+    model = genai.GenerativeModel(MODEL_NAME)
 except Exception as e:
     st.warning(f"Gemini AI setup failed: {e}. Some features may not work.")
 
