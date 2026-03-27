@@ -538,12 +538,12 @@ HEADERS = None
 try:
     # Try to get API key from secrets, fallback to ADC
     api_key = st.secrets.get("GEMINI_API_KEY")
-    client = genai.Client(api_key=api_key)
+    genai.configure(api_key=api_key)
 
-    # Use the new API - try different model names
-    MODEL_NAME = 'gemini-1.5-flash'  # Using stable, available model
+    # Use the standard model name that works reliably
+    MODEL_NAME = 'gemini-pro'  # Stable, well-supported model
 
-    model = client.models  # Use client.models instead of GenerativeModel
+    model = genai.GenerativeModel(MODEL_NAME)  # Use GenerativeModel for standard API
 except Exception as e:
     st.warning(f"Gemini AI setup failed: {e}. Some features may not work.")
 
@@ -746,11 +746,8 @@ Keys: 'name', 'quantity' (integer), 'unit', 'price' (float).
 Example: [{"name": "Chicken", "quantity": 1, "unit": "kg", "price": 5.99}]"""
                     
                     try:
-                        response = model.generate_content(
-                            model=MODEL_NAME,
-                            contents=[prompt, img]
-                        )
-                        clean_text = response.candidates[0].content.parts[0].text.replace("```json", "").replace("```", "").strip()
+                        response = model.generate_content([prompt, img])
+                        clean_text = response.text.replace("```json", "").replace("```", "").strip()
                         new_items = json.loads(clean_text)
                         
                         success_count = 0
@@ -811,11 +808,8 @@ For each category, provide:
 
 Focus on practical, delicious halal recipes with clear instructions."""
                         
-                        recipe_response = model.generate_content(
-                            model=MODEL_NAME,
-                            contents=[chef_prompt]
-                        )
-                        recipes = recipe_response.candidates[0].content.parts[0].text
+                        recipe_response = model.generate_content([chef_prompt])
+                        recipes = recipe_response.text
                         
                         # Display recipes in styled sections
                         st.markdown('<div class="recipe-section">', unsafe_allow_html=True)
