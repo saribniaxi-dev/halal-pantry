@@ -530,20 +530,55 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 2. SECURE API SETUP & MODEL FINDER ---
-model = None
+model = False
 SUPABASE_URL = None
 SUPABASE_KEY = None
 HEADERS = None
 
-try:
-    # Try to get API key from secrets, fallback to ADC
-    api_key = st.secrets.get("GEMINI_API_KEY")
-    genai.configure(api_key=api_key)
+MODEL_NAME = None
+MODEL_CANDIDATES = [
+    'gemini-1.5-flash',
+    'gemini-1.5',
+    'gemini-1.0',
+    'gemini-pro',
+    'text-bison-001'
+]
 
-    # Use the standard model name that works reliably
-    MODEL_NAME = 'gemini-pro'  # Stable, well-supported model
-    model = genai.GenerativeModel(MODEL_NAME)
+
+def find_available_model():
+    try:
+        models = genai.list_models()
+        available_names = []
+        for m in models:
+            if isinstance(m, dict):
+                name = m.get('name')
+            else:
+                name = getattr(m, 'name', None)
+            if name:
+                available_names.append(name)
+
+        if available_names:
+            for candidate in MODEL_CANDIDATES:
+                if candidate in available_names:
+                    return candidate
+    except Exception:
+        pass
+
+    # Fallback to first candidate (best effort), may still fail if unsupported
+    return MODEL_CANDIDATES[0]
+
+
+try:
+    api_key = st.secrets.get("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY is not set")
+
+    genai.configure(api_key=api_key)
+    MODEL_NAME = find_available_model()
+    model = True
+    st.info(f"Using Gemini model: {MODEL_NAME}")
 except Exception as e:
+    model = False
     st.warning(f"Gemini AI setup failed: {e}. Some features may not work.")
 
 try:
@@ -745,7 +780,12 @@ Keys: 'name', 'quantity' (integer), 'unit', 'price' (float).
 Example: [{"name": "Chicken", "quantity": 1, "unit": "kg", "price": 5.99}]"""
                     
                     try:
-                        response = model.generate_content([prompt, img])
+                        response = genai.generate_text(
+                            model=MODEL_NAME,
+                            prompt=prompt,
+                            max_output_tokens=700,
+                            temperature=0.2
+                        )
                         clean_text = response.text.replace("```json", "").replace("```", "").strip()
                         new_items = json.loads(clean_text)
                         
@@ -773,14 +813,13 @@ elif st.session_state.current_page == "chef":
     st.markdown('<h2 class="section-header">👨‍🍳 AI Halal Chef</h2>', unsafe_allow_html=True)
     st.markdown("Get personalized recipe suggestions based on your pantry with budget-conscious additions")
     
-    if not model:
-        st.error("AI model not configured.")
+    if not model or not MODEL_NAME:
+        st.error("AI model not configured. Please set GEMINI_API_KEY and ensure a supported model is available.")
     else:
         inventory = get_inventory()
         if not inventory:
             st.info("📦 Add some ingredients to your pantry first to get recipe suggestions!")
         else:
-            # Show pantry summary
             st.info(f"🍳 Using {len(inventory)} items from your pantry for recipe suggestions")
             
             budget = st.slider("Budget for additional ingredients (£)", 0.0, 20.0, 5.0, 0.5)
@@ -807,14 +846,17 @@ For each category, provide:
 
 Focus on practical, delicious halal recipes with clear instructions."""
                         
-                        recipe_response = model.generate_content([chef_prompt])
+                        recipe_response = genai.generate_text(
+                            model=MODEL_NAME,
+                            prompt=chef_prompt,
+                            max_output_tokens=1000,
+                            temperature=0.85
+                        )
                         recipes = recipe_response.text
                         
-                        # Display recipes in styled sections
                         st.markdown('<div class="recipe-section">', unsafe_allow_html=True)
                         st.markdown("### 🍳 Your Personalized Recipe Suggestions")
                         
-                        # Split by categories
                         categories = recipes.split("⚡ QUICK & EASY")[1:] if "⚡ QUICK & EASY" in recipes else [recipes]
                         
                         for i, category in enumerate(categories[:3]):
